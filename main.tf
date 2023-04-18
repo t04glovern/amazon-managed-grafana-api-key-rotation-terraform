@@ -2,37 +2,10 @@ resource "aws_secretsmanager_secret" "api_key" {
   name = "${var.name}-api-key"
 }
 
-resource "random_uuid" "lambda_src_hash" {
-  keepers = {
-    for filename in setunion(
-      fileset("${path.module}/src/", "*.py"),
-      fileset("${path.module}/src/", "requirements.txt"),
-    ) :
-    filename => filemd5("${path.module}/src/${filename}")
-  }
-}
-
-resource "null_resource" "install_dependencies" {
-  provisioner "local-exec" {
-    command = "pip install -r ${path.module}/src/requirements.txt -t ${path.module}/src/  --upgrade"
-  }
-
-  triggers = {
-    dependencies_versions = filemd5("${path.module}/src/requirements.txt")
-  }
-}
-
-data "archive_file" "lambda_zip" {
-  depends_on = [
-    null_resource.install_dependencies
-  ]
-
-  type       = "zip"
-  source_dir = "${path.module}/src/"
-  excludes = [
-    "__pycache__"
-  ]
-  output_path = "${path.module}/zip/${random_uuid.lambda_src_hash.result}.zip"
+data "archive_file" "api_key_lambda" {
+  type        = "zip"
+  source_file = "${path.module}/src/rotate.py"
+  output_path = "${path.module}/bundle.zip"
 }
 
 resource "aws_iam_role" "api_key_rotation_lambda_role" {
@@ -51,8 +24,8 @@ resource "aws_iam_role_policy" "api_key_rotation_lambda_policy" {
 resource "aws_lambda_function" "api_key_rotation" {
   function_name = "${var.name}-api-key-rotation"
 
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  filename         = data.archive_file.api_key_lambda.output_path
+  source_code_hash = data.archive_file.api_key_lambda.output_base64sha256
 
   handler = "rotate.lambda_handler"
   runtime = "python3.9"
